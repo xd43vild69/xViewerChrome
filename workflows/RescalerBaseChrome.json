@@ -1,0 +1,157 @@
+{
+  "1": {
+    "inputs": {
+      "image": "pasted/image (22).png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "1407": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "1403:141",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "1403:135": {
+    "inputs": {
+      "anything": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "easy cleanGpuUsed",
+    "_meta": {
+      "title": "🧹  Clean VRAM"
+    }
+  },
+  "1403:143": {
+    "inputs": {
+      "anything": [
+        "1403:135",
+        0
+      ]
+    },
+    "class_type": "easy clearCacheAll",
+    "_meta": {
+      "title": "🧹  Clear Cache"
+    }
+  },
+  "1403:137": {
+    "inputs": {
+      "model": "ema_vae_fp16.safetensors",
+      "device": "cuda:0",
+      "encode_tiled": true,
+      "encode_tile_size": 512,
+      "encode_tile_overlap": 64,
+      "decode_tiled": true,
+      "decode_tile_size": 512,
+      "decode_tile_overlap": 64,
+      "tile_debug": "false",
+      "offload_device": "cpu",
+      "cache_model": false
+    },
+    "class_type": "SeedVR2LoadVAEModel",
+    "_meta": {
+      "title": "🧬  SeedVR2 Load VAE Model"
+    }
+  },
+  "1403:142": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 0.5,
+      "image": [
+        "1403:143",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "⬇️  Downscale 4 better Upscale"
+    }
+  },
+  "1403:141": {
+    "inputs": {
+      "grain_intensity": 0.018,
+      "saturation_mix": 0.2,
+      "batch_size": 4,
+      "images": [
+        "1403:140",
+        0
+      ]
+    },
+    "class_type": "FastFilmGrain",
+    "_meta": {
+      "title": "🎞️ Fast Film Grain"
+    }
+  },
+  "1403:140": {
+    "inputs": {
+      "strength": 0.25,
+      "use_gpu": false,
+      "images": [
+        "1403:139",
+        0
+      ]
+    },
+    "class_type": "FastUnsharpSharpen",
+    "_meta": {
+      "title": "🎯 Fast Unsharp Sharpen"
+    }
+  },
+  "1403:138": {
+    "inputs": {
+      "model": "seedvr2_ema_7b-Q4_K_M.gguf",
+      "device": "cuda:0",
+      "blocks_to_swap": 0,
+      "swap_io_components": false,
+      "offload_device": "cuda:0",
+      "cache_model": false,
+      "attention_mode": "sageattn_2"
+    },
+    "class_type": "SeedVR2LoadDiTModel",
+    "_meta": {
+      "title": "🗂️  SeedVR2 Load DiT Model"
+    }
+  },
+  "1403:139": {
+    "inputs": {
+      "seed": 1676002393,
+      "resolution": 3000,
+      "max_resolution": 3000,
+      "batch_size": 1,
+      "uniform_batch_size": false,
+      "color_correction": "lab",
+      "temporal_overlap": 0,
+      "prepend_frames": 0,
+      "input_noise_scale": 0.015,
+      "latent_noise_scale": 0.001,
+      "offload_device": "cuda:0",
+      "enable_debug": false,
+      "image": [
+        "1403:142",
+        0
+      ],
+      "dit": [
+        "1403:138",
+        0
+      ],
+      "vae": [
+        "1403:137",
+        0
+      ]
+    },
+    "class_type": "SeedVR2VideoUpscaler",
+    "_meta": {
+      "title": "⬆️  SeedVR2 Upscaler"
+    }
+  }
+}
