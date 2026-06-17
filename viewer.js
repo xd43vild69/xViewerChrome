@@ -12,8 +12,9 @@ document.getElementById('file-input').addEventListener('change', (event) => {
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
 
-    // Filtrado estricto por tipo MIME de imagen
-    if (file.type.startsWith('image/')) {
+    // Filtrado estricto por tipo MIME (solo jpeg, jpg, png)
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+    if (allowedTypes.includes(file.type)) {
       // Generación de la URL temporal en el contexto de la extensión
       const imgUrl = URL.createObjectURL(file);
       
@@ -21,6 +22,7 @@ document.getElementById('file-input').addEventListener('change', (event) => {
       img.src = imgUrl;
       img.classList.add('img-card');
       img.title = file.name; // Tooltip con el nombre del archivo
+      img.file = file; // Guardar referencia al archivo original
       
       // Garbage collection de memoria una vez renderizado el elemento
       img.onload = () => { 
@@ -57,8 +59,55 @@ document.getElementById('file-input').addEventListener('change', (event) => {
   }
 });
 
-// Escuchar teclas globales (Espacio y flechas)
-document.addEventListener('keydown', (event) => {
+// Escuchar teclas globales (Espacio, flechas y Enter)
+document.addEventListener('keydown', async (event) => {
+  if (event.code === 'Enter') {
+    event.preventDefault();
+    const selectedImg = document.querySelector('.img-card.selected');
+    if (!selectedImg || !selectedImg.file) return;
+
+    try {
+      // 1. Subir la imagen
+      const formData = new FormData();
+      // Asegurar que usamos solo el nombre del archivo (sin rutas relativas que puedan causar 500 en el backend)
+      formData.append('image', selectedImg.file, selectedImg.file.name.split(/[/\\]/).pop());
+      formData.append('type', 'input');
+      formData.append('overwrite', 'true');
+      
+      const uploadRes = await fetch('http://localhost:8188/upload/image', {
+        method: 'POST',
+        body: formData
+      });
+      const uploadData = await uploadRes.json();
+      const finalImageName = uploadData.name;
+
+      // 2. Obtener y modificar el workflow
+      const wfRes = await fetch('./workflows/RescalerBaseChrome.json');
+      const workflow = await wfRes.json();
+      
+      // Buscar el nodo LoadImage para actualizar la imagen
+      for (const nodeId in workflow) {
+        if (workflow[nodeId].class_type === 'LoadImage') {
+          workflow[nodeId].inputs.image = finalImageName;
+          break;
+        }
+      }
+
+      // 3. Enviar el workflow a la cola de ComfyUI
+      const promptRes = await fetch('http://localhost:8188/prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: workflow })
+      });
+      const promptData = await promptRes.json();
+      
+      console.log('Prompt encolado con ID:', promptData.prompt_id);
+    } catch (err) {
+      console.error('Error enviando a ComfyUI:', err);
+    }
+    return;
+  }
+
   if (event.code === 'Space') {
     event.preventDefault(); // Evitar que la página haga scroll
     if (!document.fullscreenElement) {
