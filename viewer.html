@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Bunker Image Viewer</title>
+  <style>
+    body {
+      font-family: monospace;
+      background-color: #111;
+      color: #0f0;
+      padding: 20px;
+      margin: 0;
+    }
+    /* Ocultamos el input nativo */
+    #file-input {
+      display: none;
+    }
+    /* El label actúa como el botón de interfaz */
+    .btn-interface {
+      display: inline-block;
+      background: #222;
+      color: #0f0;
+      border: 1px solid #0f0;
+      padding: 12px 24px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 14px;
+      margin-bottom: 20px;
+      user-select: none;
+    }
+    .btn-interface:hover { 
+      background: #0f0; 
+      color: #111; 
+    }
+    /* Configuración de la cuadrícula de previsualización */
+    #grid {
+      display: grid;
+      /* Mantenemos una rejilla con columnas de tamaño fijo */
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 15px;
+      /* Alineamos los elementos al centro de su celda verticalmente */
+      align-items: center; 
+    }
+    /* Estilo de la tarjeta de imagen corregido */
+    .img-card {
+      width: 100%;
+      /* Mantenemos el contenedor cuadrado (opcional, pero ayuda a la alineación) */
+      aspect-ratio: 1; 
+      
+      /* --- CAMBIOS CLAVE AQUÍ --- */
+      /* 'contain' ajusta la imagen completa sin recortar, basándose en el lado más largo */
+      object-fit: contain; 
+      /* Aseguramos que la imagen no se estire si es más pequeña que la celda */
+      object-position: center; 
+      /* Fondo negro para el área vacía cuando la imagen no es cuadrada */
+      background-color: #000; 
+      /* --- FIN CAMBIOS CLAVE --- */
+
+      border: 1px solid #333;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+    .img-card:hover, .img-card.selected { 
+      border-color: #0f0; 
+      transform: scale(1.05); 
+    }
+  </style>
+</head>
+<body>
+
+  <label for="file-input" class="btn-interface">MONTAR DIRECTORIO LOCAL</label>
+  <input type="file" id="file-input" webkitdirectory directory multiple />
+
+  <div id="grid"></div>
+  <script src="viewer.js"></script>
+</body>
+</html>
