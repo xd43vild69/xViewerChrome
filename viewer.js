@@ -1,5 +1,6 @@
 let comfySocket = null;
 let currentPromptId = null;
+let isKeyboardNavigation = false;
 const clientId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
 function connectComfySocket() {
@@ -49,6 +50,45 @@ function connectComfySocket() {
 }
 
 function showResultImage(url) {
+  // Si estamos en pantalla completa, la superposición (overlay) no será visible porque el navegador
+  // restringe la vista exclusivamente al elemento en fullscreen (la imagen).
+  // Por lo tanto, reemplazamos temporalmente la fuente (src) de la imagen actual.
+  if (document.fullscreenElement && document.fullscreenElement.tagName === 'IMG') {
+    const fsImg = document.fullscreenElement;
+    
+    // Marcar que estamos en el estado "mostrando resultado"
+    if (!fsImg.dataset.showingResult) {
+      fsImg.dataset.showingResult = "true";
+      
+      fsImg._restoreFsResult = () => {
+        // Generar un nuevo Blob URL fresco a partir del archivo original guardado en memoria
+        if (fsImg.file) {
+          fsImg.src = URL.createObjectURL(fsImg.file);
+        }
+        delete fsImg.dataset.showingResult;
+        
+        fsImg.removeEventListener('click', fsImg._restoreFsResult);
+        document.removeEventListener('fullscreenchange', fsImg._fsChangeHandler);
+        delete fsImg._restoreFsResult;
+        delete fsImg._fsChangeHandler;
+      };
+      
+      fsImg._fsChangeHandler = () => {
+        // Si el usuario sale de fullscreen o navega a otra imagen
+        if (document.fullscreenElement !== fsImg) {
+          if (fsImg._restoreFsResult) fsImg._restoreFsResult();
+        }
+      };
+      
+      fsImg.addEventListener('click', fsImg._restoreFsResult);
+      document.addEventListener('fullscreenchange', fsImg._fsChangeHandler);
+    }
+    
+    fsImg.src = url; // Mostramos la nueva imagen generada
+    return;
+  }
+
+  // Lógica original de Overlay para cuando NO estamos en fullscreen
   let overlay = document.getElementById('result-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -119,8 +159,8 @@ document.getElementById('file-input').addEventListener('change', (event) => {
       img.file = file; // Guardar referencia al archivo original
       
       // Garbage collection de memoria una vez renderizado el elemento
-      img.onload = () => { 
-        URL.revokeObjectURL(imgUrl); 
+      img.onload = function() { 
+        URL.revokeObjectURL(this.src); 
       };
 
       if (firstImage) {
@@ -128,8 +168,10 @@ document.getElementById('file-input').addEventListener('change', (event) => {
         firstImage = false;
       }
 
-      // Actualizar la imagen seleccionada al pasar el ratón
+      // Actualizar la imagen seleccionada al pasar el ratón (solo si el usuario movió el ratón realmente)
       img.addEventListener('mouseenter', () => {
+        if (isKeyboardNavigation) return;
+        
         const prevSelected = document.querySelector('.img-card.selected');
         if (prevSelected) {
           prevSelected.classList.remove('selected');
@@ -153,59 +195,83 @@ document.getElementById('file-input').addEventListener('change', (event) => {
   }
 });
 
-// Escuchar teclas globales (Espacio, flechas y Enter)
+async function runWorkflow(selectedImg, workflowFilename) {
+  try {
+    // 1. Subir la imagen
+    const formData = new FormData();
+    // Asegurar que usamos un nombre de archivo único para evitar que ComfyUI use la caché
+    const originalName = selectedImg.file.name.split(/[/\\]/).pop();
+    const uniqueName = `img_${Date.now()}_${originalName}`;
+    formData.append('image', selectedImg.file, uniqueName);
+    formData.append('type', 'input');
+    formData.append('overwrite', 'true');
+    
+    const uploadRes = await fetch('http://localhost:8188/upload/image', {
+      method: 'POST',
+      body: formData
+    });
+    const uploadData = await uploadRes.json();
+    const finalImageName = uploadData.name;
+
+    // 2. Obtener y modificar el workflow
+    const wfRes = await fetch(`./workflows/${workflowFilename}`);
+    const workflow = await wfRes.json();
+    
+    // Buscar el nodo LoadImage para actualizar la imagen y forzar recálculo
+    for (const nodeId in workflow) {
+      if (workflow[nodeId].class_type === 'LoadImage') {
+        workflow[nodeId].inputs.image = finalImageName;
+      }
+      // Randomizar cualquier semilla (seed) en los nodos para destruir completamente la caché de ComfyUI
+      if (workflow[nodeId].inputs && typeof workflow[nodeId].inputs.seed !== 'undefined') {
+        workflow[nodeId].inputs.seed = Math.floor(Math.random() * 2147483647);
+      }
+    }
+
+    // 3. Enviar el workflow a la cola de ComfyUI
+    const promptRes = await fetch('http://localhost:8188/prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: workflow, client_id: clientId })
+    });
+    const promptData = await promptRes.json();
+    
+    currentPromptId = promptData.prompt_id;
+    console.log(`Prompt encolado con ID: ${currentPromptId} (${workflowFilename})`);
+  } catch (err) {
+    console.error(`Error enviando a ComfyUI (${workflowFilename}):`, err);
+  }
+}
+
+// Escuchar teclas globales (Espacio, flechas, Enter, Cmd+I y Escape)
 document.addEventListener('keydown', async (event) => {
+  if (event.code === 'Escape') {
+    const overlay = document.getElementById('result-overlay');
+    if (overlay && overlay.style.display !== 'none') {
+      event.preventDefault();
+      overlay.style.display = 'none';
+      const img = document.getElementById('result-img');
+      if (img) {
+        URL.revokeObjectURL(img.src);
+        img.src = '';
+      }
+      return;
+    }
+  }
+
   if (event.code === 'Enter') {
     event.preventDefault();
     const selectedImg = document.querySelector('.img-card.selected');
     if (!selectedImg || !selectedImg.file) return;
-
-    try {
-      // 1. Subir la imagen
-      const formData = new FormData();
-      // Asegurar que usamos un nombre de archivo único para evitar que ComfyUI use la caché
-      const originalName = selectedImg.file.name.split(/[/\\]/).pop();
-      const uniqueName = `img_${Date.now()}_${originalName}`;
-      formData.append('image', selectedImg.file, uniqueName);
-      formData.append('type', 'input');
-      formData.append('overwrite', 'true');
-      
-      const uploadRes = await fetch('http://localhost:8188/upload/image', {
-        method: 'POST',
-        body: formData
-      });
-      const uploadData = await uploadRes.json();
-      const finalImageName = uploadData.name;
-
-      // 2. Obtener y modificar el workflow
-      const wfRes = await fetch('./workflows/RescalerBaseChrome.json');
-      const workflow = await wfRes.json();
-      
-      // Buscar el nodo LoadImage para actualizar la imagen y forzar recálculo
-      for (const nodeId in workflow) {
-        if (workflow[nodeId].class_type === 'LoadImage') {
-          workflow[nodeId].inputs.image = finalImageName;
-        }
-        // Randomizar cualquier semilla (seed) en los nodos para destruir completamente la caché de ComfyUI
-        if (workflow[nodeId].inputs && typeof workflow[nodeId].inputs.seed !== 'undefined') {
-          workflow[nodeId].inputs.seed = Math.floor(Math.random() * 2147483647);
-        }
-      }
-
-      // 3. Enviar el workflow a la cola de ComfyUI
-      const promptRes = await fetch('http://localhost:8188/prompt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: workflow, client_id: clientId })
-      });
-      const promptData = await promptRes.json();
-      
-      currentPromptId = promptData.prompt_id;
-      console.log('Prompt encolado con ID:', currentPromptId);
-      // Opcional: mostrar un indicador visual de "Procesando..."
-    } catch (err) {
-      console.error('Error enviando a ComfyUI:', err);
-    }
+    await runWorkflow(selectedImg, 'RescalerBaseChrome.json');
+    return;
+  }
+  
+  if (event.metaKey && event.code === 'KeyI') {
+    event.preventDefault();
+    const selectedImg = document.querySelector('.img-card.selected');
+    if (!selectedImg || !selectedImg.file) return;
+    await runWorkflow(selectedImg, 'InvertBaseChrome.json');
     return;
   }
 
@@ -230,6 +296,7 @@ document.addEventListener('keydown', async (event) => {
   const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
   if (keys.includes(event.code)) {
     event.preventDefault(); // Evitar scroll con las flechas
+    isKeyboardNavigation = true; // Dar prioridad al teclado y suspender temporalmente el hover del ratón
     
     const grid = document.getElementById('grid');
     const children = Array.from(grid.children);
@@ -274,4 +341,9 @@ document.addEventListener('keydown', async (event) => {
       }
     }
   }
+});
+
+// Detectar movimiento real del ratón para reactivar la selección por hover
+document.addEventListener('mousemove', () => {
+  isKeyboardNavigation = false;
 });
