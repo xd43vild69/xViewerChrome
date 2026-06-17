@@ -1,3 +1,97 @@
+let comfySocket = null;
+let currentPromptId = null;
+const clientId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+function connectComfySocket() {
+  if (comfySocket) return;
+  comfySocket = new WebSocket(`ws://localhost:8188/ws?clientId=${clientId}`);
+  
+  comfySocket.addEventListener('message', async (event) => {
+    if (typeof event.data === 'string') {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'executing' || msg.type === 'executed') {
+          console.log('WS Event:', msg.type, msg.data);
+        }
+        
+        // Escuchamos el evento 'executed' que expone el nodo que guardó la imagen y el nombre resultante
+        if (msg.type === 'executed' && msg.data.prompt_id === currentPromptId) {
+          const output = msg.data.output;
+          if (output && output.images && output.images.length > 0) {
+            const imgInfo = output.images[0];
+            let url = `http://localhost:8188/view?filename=${encodeURIComponent(imgInfo.filename)}&type=${imgInfo.type}`;
+            if (imgInfo.subfolder) {
+              url += `&subfolder=${encodeURIComponent(imgInfo.subfolder)}`;
+            }
+            url += `&t=${Date.now()}`; // Evitar caché
+            
+            // 4. Recuperación del Asset
+            const res = await fetch(url);
+            if (!res.ok) {
+              console.error(`Error al recuperar la imagen: HTTP ${res.status}`, await res.text());
+              return;
+            }
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            
+            showResultImage(blobUrl);
+          }
+        }
+      } catch (err) {
+        console.error('Error parseando WS message', err);
+      }
+    }
+  });
+  
+  comfySocket.addEventListener('close', () => {
+    comfySocket = null;
+  });
+}
+
+function showResultImage(url) {
+  let overlay = document.getElementById('result-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'result-overlay';
+    // Estilos para oscurecer el fondo y centrar la imagen
+    overlay.style.position = 'fixed';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100vw';
+    overlay.style.height = '100vh';
+    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+    overlay.style.display = 'flex';
+    overlay.style.justifyContent = 'center';
+    overlay.style.alignItems = 'center';
+    overlay.style.zIndex = '9999';
+    overlay.style.cursor = 'pointer';
+    overlay.title = 'Click para cerrar';
+    
+    const img = document.createElement('img');
+    img.id = 'result-img';
+    img.style.maxWidth = '90%';
+    img.style.maxHeight = '90%';
+    img.style.border = '2px solid #0f0';
+    img.style.boxShadow = '0 0 20px #0f0';
+    
+    overlay.addEventListener('click', () => {
+      overlay.style.display = 'none';
+      URL.revokeObjectURL(img.src);
+      img.src = '';
+    });
+    
+    overlay.appendChild(img);
+    document.body.appendChild(overlay);
+  }
+  
+  const imgElement = document.getElementById('result-img');
+  imgElement.src = url;
+  overlay.style.display = 'flex';
+}
+
+// Iniciar conexión WS
+connectComfySocket();
+
 document.getElementById('file-input').addEventListener('change', (event) => {
   const grid = document.getElementById('grid');
   grid.innerHTML = ''; // Limpiar buffer visual de renderizados previos
@@ -69,8 +163,10 @@ document.addEventListener('keydown', async (event) => {
     try {
       // 1. Subir la imagen
       const formData = new FormData();
-      // Asegurar que usamos solo el nombre del archivo (sin rutas relativas que puedan causar 500 en el backend)
-      formData.append('image', selectedImg.file, selectedImg.file.name.split(/[/\\]/).pop());
+      // Asegurar que usamos un nombre de archivo único para evitar que ComfyUI use la caché
+      const originalName = selectedImg.file.name.split(/[/\\]/).pop();
+      const uniqueName = `img_${Date.now()}_${originalName}`;
+      formData.append('image', selectedImg.file, uniqueName);
       formData.append('type', 'input');
       formData.append('overwrite', 'true');
       
@@ -85,11 +181,14 @@ document.addEventListener('keydown', async (event) => {
       const wfRes = await fetch('./workflows/RescalerBaseChrome.json');
       const workflow = await wfRes.json();
       
-      // Buscar el nodo LoadImage para actualizar la imagen
+      // Buscar el nodo LoadImage para actualizar la imagen y forzar recálculo
       for (const nodeId in workflow) {
         if (workflow[nodeId].class_type === 'LoadImage') {
           workflow[nodeId].inputs.image = finalImageName;
-          break;
+        }
+        // Randomizar cualquier semilla (seed) en los nodos para destruir completamente la caché de ComfyUI
+        if (workflow[nodeId].inputs && typeof workflow[nodeId].inputs.seed !== 'undefined') {
+          workflow[nodeId].inputs.seed = Math.floor(Math.random() * 2147483647);
         }
       }
 
@@ -97,11 +196,13 @@ document.addEventListener('keydown', async (event) => {
       const promptRes = await fetch('http://localhost:8188/prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: workflow })
+        body: JSON.stringify({ prompt: workflow, client_id: clientId })
       });
       const promptData = await promptRes.json();
       
-      console.log('Prompt encolado con ID:', promptData.prompt_id);
+      currentPromptId = promptData.prompt_id;
+      console.log('Prompt encolado con ID:', currentPromptId);
+      // Opcional: mostrar un indicador visual de "Procesando..."
     } catch (err) {
       console.error('Error enviando a ComfyUI:', err);
     }
